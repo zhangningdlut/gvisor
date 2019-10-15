@@ -112,6 +112,10 @@ type inodeFileState struct {
 	writeHandles   *handles `state:"nosave"`
 	writeHandlesRW bool     `state:"nosave"`
 
+	// if readHandlesNeedUpdate is bool, we need to update readHandles when
+	// next write handle
+	readHandlesNeedUpdate bool `state:"nosave"`
+
 	// loading is acquired when the inodeFileState begins an asynchronous
 	// load. It releases when the load is complete. Callers that require all
 	// state to be available should call waitForLoad() to ensure that.
@@ -157,6 +161,9 @@ func (i *inodeFileState) setSharedHandlesLocked(flags fs.FileFlags, h *handles) 
 	if flags.Read && i.readHandles == nil {
 		h.IncRef()
 		i.readHandles = h
+		if i.writeHandles == nil {
+			i.readHandlesNeedUpdate = true
+		}
 	}
 	if flags.Write {
 		if i.writeHandles == nil {
@@ -197,6 +204,15 @@ func (i *inodeFileState) getHandles(ctx context.Context, flags fs.FileFlags) (*h
 		return nil, err
 	}
 	i.setSharedHandlesLocked(flags, h)
+
+	if flags.Write && i.readHandlesNeedUpdate {
+		rh, err := newHandles(ctx, i.file, fs.FileFlags{Read: true})
+		if err == nil {
+			i.readHandles.DecRef()
+			i.readHandles = rh
+			i.readHandlesNeedUpdate = false
+		}
+	}
 	return h, nil
 }
 
